@@ -6,6 +6,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font
 
 # Mapping dictionary
+
 police_station_mapping = {
     "11188003": "ભીલોડા", "11188010": "શામળાજી", "11188004": "ધનસુરા",
     "11188002": "બાયડ", "11188001": "આબલીયારા", "11188009": "મોડાસા_ટાઉન",
@@ -16,16 +17,15 @@ police_station_mapping = {
 
 st.title("📊 FIR & SID Excel Processor")
 
-# Dropdown for mode
-mode = st.selectbox("Choose Processing Mode", ["Fir Link SID", "Fir ma use karel SID"])
-
-# Upload files
+# Upload SID folder (as multiple files)
 sid_files = st.file_uploader("Upload all SID .xls files", accept_multiple_files=True, type=["xls"])
+
+# Upload FIR Case file
 fir_file = st.file_uploader("Upload FIR Case.xls file", type=["xls"])
 
 if st.button("Generate Report") and sid_files and fir_file:
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Save SID files
+        # Save SID files temporarily
         sid_paths = []
         for sid_file in sid_files:
             sid_path = os.path.join(tmpdir, sid_file.name)
@@ -38,11 +38,11 @@ if st.button("Generate Report") and sid_files and fir_file:
         with open(fir_path, "wb") as f:
             f.write(fir_file.read())
 
-        # Read data
+        # Process data
         sid_df_list = [pd.read_excel(p, engine='xlrd', header=None) for p in sid_paths]
         merged_sid_df = pd.concat(sid_df_list, ignore_index=True)
-        df2 = pd.read_excel(fir_path, engine='xlrd', header=None)
 
+        df2 = pd.read_excel(fir_path, engine='xlrd', header=None)
         police_station_name = df2.iloc[4, 1]
         date_column = df2.iloc[4:, 2].dropna()
         start_date = pd.to_datetime(date_column.iloc[0], dayfirst=True).strftime("%d/%m/%Y")
@@ -58,9 +58,7 @@ if st.button("Generate Report") and sid_files and fir_file:
             "FIR Number": fir_number
         })
 
-        all_case_numbers = pd.Series(pd.concat([case_number_1, case_number_2]).dropna().unique()).astype(str).tolist()
-        output_df["FIR Number"] = output_df["FIR Number"].astype(str)
-
+        all_case_numbers = pd.concat([case_number_1, case_number_2]).dropna().unique()
         output_df["Final Output"] = output_df["FIR Number"].apply(
             lambda x: x if x in all_case_numbers else None
         )
@@ -69,14 +67,13 @@ if st.button("Generate Report") and sid_files and fir_file:
             lambda row: row["FIR Number"] if pd.isna(row["Final Output"]) else None, axis=1
         )
 
-        output_df["FIR Prefix"] = output_df["FIR Number"].str[:8]
+        output_df["FIR Prefix"] = output_df["FIR Number"].astype(str).str[:8]
         output_df["Mapped Police Station"] = output_df["FIR Prefix"].map(police_station_mapping)
 
         io_map = dict(zip(df2.iloc[4:, 1], df2.iloc[4:, 6]))
         sheet2_data = []
         last_prefix = None
         output_df_sorted = output_df.sort_values(by=["FIR Prefix", "FIR Number"])
-
         for _, row in output_df_sorted.iterrows():
             fir_prefix = row["FIR Prefix"]
             station = row["Mapped Police Station"]
@@ -89,7 +86,6 @@ if st.button("Generate Report") and sid_files and fir_file:
                                 station if fir_prefix != last_prefix else '', 
                                 fir_num, final_out, pending, pending_link, io_name])
             last_prefix = fir_prefix
-
         sheet2_df = pd.DataFrame(sheet2_data, columns=[
             "FIR Prefix", "Mapped Police Station", "FIR Number", "Final Output",
             "Pending SID", "Pending Fir Link", "IO Name"
@@ -103,12 +99,11 @@ if st.button("Generate Report") and sid_files and fir_file:
             pending_count = group["Pending SID"].count()
             percentage = round((final_count / fir_count) * 100, 2) if fir_count else 0
             dashboard_data.append([station, fir_count, final_count, pending_count, percentage])
-        
         dashboard_df = pd.DataFrame(
             dashboard_data,
             columns=["પો.સ્ટેનુ નામ", "એફ.આઇ.આર સંખ્યા", "SID સંખ્યા", "SID બાકી સંખ્યા", "ટકાવારી"]
-        ).sort_values(by="ટકાવારી", ascending=False).reset_index(drop=True)
-
+        )
+        dashboard_df = dashboard_df.sort_values(by="ટકાવારી", ascending=False).reset_index(drop=True)
         dashboard_df.insert(0, "ક્રમ સં.", range(1, len(dashboard_df) + 1))
         title_row = pd.DataFrame([[
             f"E-Sakshya SID  Dt.{start_date} To Dt.{end_date}", None, None, None, None, None
@@ -121,21 +116,14 @@ if st.button("Generate Report") and sid_files and fir_file:
             dashboard_df["SID બાકી સંખ્યા"].sum(),
             round((dashboard_df["SID સંખ્યા"].sum() / dashboard_df["એફ.આઇ.આર સંખ્યા"].sum()) * 100, 2)
         ]], columns=dashboard_df.columns)
-
         sheet3_df = pd.concat([title_row, header_row, dashboard_df, total_row], ignore_index=True)
-
-        # Sheet4 summary
-        sheet4_data = output_df[output_df["Pending SID"].notna()][["Mapped Police Station", "Pending SID"]]
-        sheet4_df = sheet4_data.groupby("Mapped Police Station")["Pending SID"].apply(list).reset_index()
 
         output_path = os.path.join(tmpdir, "output.xlsx")
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             output_df.to_excel(writer, index=False, sheet_name="Sheet1")
             sheet2_df.to_excel(writer, index=False, sheet_name="Sheet2")
             sheet3_df.to_excel(writer, index=False, header=False, sheet_name="Sheet3")
-            sheet4_df.to_excel(writer, index=False, sheet_name="Sheet4")
 
-        # Style Sheet3 (bold headers and totals)
         wb = load_workbook(output_path)
         ws3 = wb["Sheet3"]
         bold_font = Font(bold=True)
