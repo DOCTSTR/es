@@ -6,7 +6,6 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font
 
 # Mapping dictionary
-
 police_station_mapping = {
     "11188003": "ભીલોડા", "11188010": "શામળાજી", "11188004": "ધનસુરા",
     "11188002": "બાયડ", "11188001": "આબલીયારા", "11188009": "મોડાસા_ટાઉન",
@@ -16,6 +15,8 @@ police_station_mapping = {
 }
 
 st.title("📊 FIR & SID Excel Processor")
+
+mode = st.selectbox("Select Processing Mode", ["Fir Link SID", "Fir ma use karel SID"])
 
 # Upload SID folder (as multiple files)
 sid_files = st.file_uploader("Upload all SID .xls files", accept_multiple_files=True, type=["xls"])
@@ -38,19 +39,30 @@ if st.button("Generate Report") and sid_files and fir_file:
         with open(fir_path, "wb") as f:
             f.write(fir_file.read())
 
-        # Process data
+        # Load data
         sid_df_list = [pd.read_excel(p, engine='xlrd', header=None) for p in sid_paths]
         merged_sid_df = pd.concat(sid_df_list, ignore_index=True)
-
         df2 = pd.read_excel(fir_path, engine='xlrd', header=None)
+
         police_station_name = df2.iloc[4, 1]
         date_column = df2.iloc[4:, 2].dropna()
         start_date = pd.to_datetime(date_column.iloc[0], dayfirst=True).strftime("%d/%m/%Y")
         end_date = pd.to_datetime(date_column.iloc[-1], dayfirst=True).strftime("%d/%m/%Y")
 
+        # Mode-specific logic
         case_number_1 = merged_sid_df.iloc[3:, 2].reset_index(drop=True)
         case_number_2 = merged_sid_df.iloc[3:, 10].reset_index(drop=True)
         fir_number = df2.iloc[4:, 1].reset_index(drop=True)
+
+        if mode == "Fir Link SID":
+            all_case_numbers = pd.concat([case_number_1, case_number_2]).dropna().unique()
+            final_output = fir_number.apply(lambda x: x if x in all_case_numbers else None)
+        else:  # "Fir ma use karel SID"
+            all_fir_numbers = fir_number.dropna().unique()
+            combined_sids = pd.concat([case_number_1, case_number_2]).dropna().unique()
+            final_output = pd.Series([
+                sid if sid in all_fir_numbers else None for sid in combined_sids
+            ])
 
         output_df = pd.DataFrame({
             "Case_Number_1": case_number_1,
@@ -58,7 +70,6 @@ if st.button("Generate Report") and sid_files and fir_file:
             "FIR Number": fir_number
         })
 
-        all_case_numbers = pd.concat([case_number_1, case_number_2]).dropna().unique()
         output_df["Final Output"] = output_df["FIR Number"].apply(
             lambda x: x if x in all_case_numbers else None
         )
@@ -118,12 +129,24 @@ if st.button("Generate Report") and sid_files and fir_file:
         ]], columns=dashboard_df.columns)
         sheet3_df = pd.concat([title_row, header_row, dashboard_df, total_row], ignore_index=True)
 
+        # Sheet4 Summary
+        sheet4_df = pd.DataFrame({
+            "વિશ્લેષણ મોડ": [mode],
+            "કુલ FIR": [dashboard_df["એફ.આઇ.આર સંખ્યા"].sum()],
+            "કુલ SID": [dashboard_df["SID સંખ્યા"].sum()],
+            "બાકી SID": [dashboard_df["SID બાકી સંખ્યા"].sum()],
+            "ટકાવારી": [round((dashboard_df["SID સંખ્યા"].sum() / dashboard_df["એફ.આઇ.આર સંખ્યા"].sum()) * 100, 2)]
+        })
+
+        # Save Excel
         output_path = os.path.join(tmpdir, "output.xlsx")
         with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
             output_df.to_excel(writer, index=False, sheet_name="Sheet1")
             sheet2_df.to_excel(writer, index=False, sheet_name="Sheet2")
             sheet3_df.to_excel(writer, index=False, header=False, sheet_name="Sheet3")
+            sheet4_df.to_excel(writer, index=False, sheet_name="Sheet4")
 
+        # Format Sheet3 Bold
         wb = load_workbook(output_path)
         ws3 = wb["Sheet3"]
         bold_font = Font(bold=True)
@@ -131,5 +154,6 @@ if st.button("Generate Report") and sid_files and fir_file:
         for cell in ws3[ws3.max_row]: cell.font = bold_font
         wb.save(output_path)
 
+        # Download
         with open(output_path, "rb") as f:
             st.download_button("📥 Download Output Excel", f, file_name="Megh.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
