@@ -70,9 +70,12 @@ if st.button("Generate Report") and sid_files and fir_file:
             "FIR Number": fir_number
         })
 
-        output_df["Final Output"] = output_df["FIR Number"].apply(
-            lambda x: x if x in all_case_numbers else None
-        )
+        all_case_numbers = pd.Series(pd.concat([case_number_1, case_number_2]).dropna().unique()).astype(str).tolist()
+
+output_df["Final Output"] = output_df["FIR Number"].astype(str).apply(
+    lambda x: x if x in all_case_numbers else None
+)
+
 
         output_df["Pending SID"] = output_df.apply(
             lambda row: row["FIR Number"] if pd.isna(row["Final Output"]) else None, axis=1
